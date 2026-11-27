@@ -38,6 +38,8 @@ services:
 
     restart: unless-stopped
     environment:
+      - CONDS_CACHE_MAX=2
+      # Add limiter to prevent VRAM OOM on weaker cards.
       - HF_TOKEN=YOUR_TOKEN_HERE
       # Enable faster Hugging Face downloads inside the container
       - HF_HUB_ENABLE_HF_TRANSFER=1

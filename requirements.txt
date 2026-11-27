@@ -33,7 +33,6 @@ transformers==4.46.3
 einops>=0.7.0
 omegaconf==2.3.0
 resampy==0.4.3
-resemble-perth==1.0.1
 
 # --- Web Framework & Server ---
 fastapi>=0.100.0,<0.116.0       # starlette<1.0 needed for TemplateResponse compat

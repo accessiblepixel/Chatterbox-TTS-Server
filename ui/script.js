@@ -320,7 +320,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             modelIndicator.classList.remove('hidden');
 
             // Use simplified modifier classes
-            if (modelInfo.type === 'turbo') {
+            if (modelInfo.flavor  === 'nano') {
+                modelBadge.className = 'model-badge nano';
+                modelBadgeText.textContent = 'Nano';
+	    } else if (modelInfo.type === 'turbo') {
                 modelBadge.className = 'model-badge turbo';
                 modelBadgeText.textContent = '⚡ Turbo';
             } else if (modelInfo.type === 'multilingual') {
@@ -348,7 +351,9 @@ document.addEventListener('DOMContentLoaded', async function () {
         // Update model selector dropdown to match loaded model
         if (modelSelect && !modelChangesPending) {
             let selectorValue = 'chatterbox';
-            if (modelInfo.type === 'turbo') {
+            if (modelInfo.flavor === 'nano') {
+                selectorValue = 'chatterbox-nano';
+            } else if (modelInfo.type === 'turbo') {
                 selectorValue = 'chatterbox-turbo';
             } else if (modelInfo.type === 'multilingual') {
                 selectorValue = 'chatterbox-multilingual';
@@ -363,7 +368,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         // Show/hide paralinguistic tags section (Turbo only)
         if (paralinguisticTagsSection) {
-            if (modelInfo.type === 'turbo' && modelInfo.supports_paralinguistic_tags) {
+            if (modelInfo.type === 'turbo' || modelInfo.type === 'nano' && modelInfo.supports_paralinguistic_tags) {
                 paralinguisticTagsSection.classList.remove('hidden');
             } else {
                 paralinguisticTagsSection.classList.add('hidden');
@@ -371,7 +376,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         // Hide exaggeration and CFG for turbo model
-        if (modelInfo.type === 'turbo') {
+        if (modelInfo.type === 'turbo' || modelInfo.type === 'nano') {
             exaggerationGroup?.classList.add('hidden');
             cfgWeightGroup?.classList.add('hidden');
         } else {
@@ -463,7 +468,9 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         const newSelector = modelSelect.value;
         let currentSelector = 'chatterbox';
-        if (currentModelInfo?.type === 'turbo') {
+        if (currentModelInfo?.flavor === 'nano') {
+        currentSelector = 'chatterbox-nano';
+        } else if (currentModelInfo?.type === 'turbo') {
             currentSelector = 'chatterbox-turbo';
         } else if (currentModelInfo?.type === 'multilingual') {
             currentSelector = 'chatterbox-multilingual';
