@@ -1,3 +1,16 @@
+I have forked the original Chatterbox-TTS-Server to add nano model support, and a couple of waiting patches (so far) on the repo, like the LRU cache, because switching voices a bunch would cause OOM errors on my 1060 6GB, and patched the upstream chatterbox python myself to remove the watermarker, it kept causing problems.
+
+It (I think) also makes it possible to run Chatterbox-TTS-Server on 4GB VRAM class cards with nano and a suitable cache restriction with ``CONDS_CACHE_MAX=2`` in the environment.
+
+I'm grateful for https://github.com/devnen/Chatterbox-TTS-Server/pull/160 and https://github.com/devnen/Chatterbox-TTS-Server/issues/162 for helping me bumble my way through this.
+
+I haven't updated every architecture possible, and I haven't tested it on anything other than my NVidia GTX10XX series cards. If the upstream wants to use what I've done, feel free. I'm just making it work for me.
+
+**Also:**
+[AI Disclaimer: I used a local AI to help get my head around the codebase]
+
+---
+
 # Chatterbox TTS Server: OpenAI-Compatible API with Web UI, Large Text Handling & Built-in Voices
 
 **Self-host Resemble AI's [Chatterbox](https://github.com/resemble-ai/chatterbox) open-source TTS family (Original + Multilingual + Turbo) behind an OpenAI‑compatible API and a modern Web UI. The complete lineup includes the original high-quality model, multilingual support for 23 languages, and Chatterbox‑Turbo—a streamlined 350M-parameter model with dramatically improved throughput and native paralinguistic tags like `[laugh]`, `[cough]`, and `[chuckle]` for more expressive voice agents and narration. Features voice cloning, large text processing via intelligent chunking, audiobook generation, and consistent, reproducible voices using built-in ready-to-use voices and a generation seed feature.**
