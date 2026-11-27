@@ -1,10 +1,12 @@
 # File: engine.py
 # Core TTS model loading and speech generation logic.
-
+# Patched to fix:  https://github.com/devnen/Chatterbox-TTS-Server/pull/160/files
 import gc
 import logging
 import os
 import random
+import threading
+from collections import OrderedDict
 import numpy as np
 import torch
 from typing import Optional, Tuple
@@ -59,6 +61,10 @@ MODEL_SELECTOR_MAP = {
     "chatterbox": "original",
     "original": "original",
     "resembleai/chatterbox": "original",
+    # Nano model selectors
+    "chatterbox-nano": "turbo",
+    "nano": "turbo",
+    "resembleai/chatterbox-nano": "turbo",
     # Turbo model selectors
     "chatterbox-turbo": "turbo",
     "turbo": "turbo",
@@ -110,11 +116,83 @@ model_device: Optional[str] = (
 
 # Track which model type is loaded
 loaded_model_type: Optional[str] = None  # "original" or "turbo"
+loaded_model_flavor: Optional[str] = "standard" 
 loaded_model_class_name: Optional[str] = None  # "ChatterboxTTS" or "ChatterboxTurboTTS"
 
 # Voice conditioning cache: avoids re-encoding the same voice file on every request.
 # Key: (resolved_path, file_mtime, exaggeration) — mtime invalidates if file changes.
-_conds_cache: dict = {}
+#
+# Bounded, because each entry pins GPU tensors for the process lifetime and this
+# was previously an unbounded dict cleared only by unload_model(). Measured on a
+# P106-100 (5.93 GiB) with chatterbox-turbo: cycling 28 reference voices grew
+# live tensors from 4.09 to 5.46 GiB and left 0.11 GiB of headroom, after which
+# 406 of 453 requests failed. The same load with one voice ran clean.
+#
+# This is not only a small-card concern. /upload_reference stores each uploaded
+# file under its own path, so every distinct voice a deployment ever serves mints
+# a permanent key — a larger card buys a higher ceiling, not a different outcome.
+#
+# CONDS_CACHE_MAX bounds the entry count. Measured cost is ~175 MB of VRAM per
+# entry (live tensors grew 1.37 GiB across exactly 8 cached voices), so this is a
+# far more expensive cache than it looks — budget it against free VRAM, not
+# against an entry count that sounds small.
+#
+# The default of 4 costs ~700 MB, which leaves a 6 GB card ~1.1 GiB for
+# generation after the 4.09 GiB model. On a 12 GB card 16+ is comfortable. Set 0
+# to disable caching and re-encode the voice on every request.
+def _resolve_conds_cache_max() -> int:
+    """Read CONDS_CACHE_MAX, tolerating garbage rather than failing to import."""
+    raw = os.environ.get("CONDS_CACHE_MAX", "4").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning(
+            f"CONDS_CACHE_MAX={raw!r} is not an integer; using the default of 4."
+        )
+        return 4
+
+
+_CONDS_CACHE_MAX: int = _resolve_conds_cache_max()
+_conds_cache: "OrderedDict[tuple, object]" = OrderedDict()
+
+# synthesize() runs concurrently: server.py dispatches it through
+# loop.run_in_executor(), so several threads can touch this cache at once.
+# Reads are two steps (look up, then refresh recency) and writes are three
+# (insert, refresh, evict), none of which are atomic — without this lock a
+# thread can evict a key between another thread's lookup and its use, raising
+# KeyError. The unbounded version could not hit this because nothing was ever
+# removed.
+_conds_cache_lock = threading.Lock()
+
+
+def _conds_cache_get(key: tuple):
+    """Return cached conds for `key` and mark it most-recently-used, else None."""
+    if _CONDS_CACHE_MAX == 0:
+        return None
+    with _conds_cache_lock:
+        conds = _conds_cache.get(key)
+        if conds is not None:
+            _conds_cache.move_to_end(key)
+        return conds
+
+
+def _conds_cache_store(key: tuple, conds) -> None:
+    """Insert under an LRU bound, evicting the least recently used entries.
+
+    Eviction drops the last reference to that entry's tensors; the caching
+    allocator reuses the freed blocks, so VRAM is recovered without an explicit
+    empty_cache() on the request path.
+    """
+    if _CONDS_CACHE_MAX == 0:
+        return
+    with _conds_cache_lock:
+        _conds_cache[key] = conds
+        _conds_cache.move_to_end(key)
+        while len(_conds_cache) > _CONDS_CACHE_MAX:
+            evicted_key, _ = _conds_cache.popitem(last=False)
+            logger.debug(
+                f"Voice cache evicted (LRU, max={_CONDS_CACHE_MAX}): {evicted_key[0]}"
+            )
 
 
 def _conds_cache_key(path: str, exaggeration: float) -> tuple:
@@ -247,10 +325,15 @@ def get_model_info() -> dict:
     Returns:
         Dictionary containing model information
     """
+    loaded_model_display_name = loaded_model_class_name
+    if loaded_model_flavor == "nano":
+        loaded_model_display_name = loaded_model_display_name.replace("Turbo", "Nano")
+
     return {
         "loaded": MODEL_LOADED,
         "type": loaded_model_type,  # "original", "turbo", or "multilingual"
-        "class_name": loaded_model_class_name,
+        "flavor": loaded_model_flavor,
+        "class_name": loaded_model_display_name,
         "device": model_device,
         "sample_rate": chatterbox_model.sr if chatterbox_model else None,
         "supports_paralinguistic_tags": loaded_model_type == "turbo",
@@ -277,7 +360,7 @@ def load_model() -> bool:
         bool: True if the model was loaded successfully, False otherwise.
     """
     global chatterbox_model, MODEL_LOADED, model_device
-    global loaded_model_type, loaded_model_class_name
+    global loaded_model_flavor, loaded_model_type, loaded_model_class_name
 
     if MODEL_LOADED:
         logger.info("TTS model is already loaded.")
@@ -365,7 +448,18 @@ def load_model() -> bool:
                 )
 
             # Load the model using from_pretrained - handles HuggingFace downloads automatically
-            chatterbox_model = model_class.from_pretrained(device=model_device)
+            #New: Support for nano
+            is_nano = any(s in model_selector for s in ["nano"])
+            loaded_model_flavor = "nano" if is_nano else "standard"
+
+            # We only pass 'nano' to models that actually have it in their from_pretrained signature
+            if model_type == "turbo" or is_nano:
+                chatterbox_model = model_class.from_pretrained(device=model_device, nano=is_nano)
+            else:
+                # For Multilingual, VC, etc., just call it normally. No 'nano' argument!
+                chatterbox_model = model_class.from_pretrained(device=model_device)
+
+            #OLD:chatterbox_model = model_class.from_pretrained(device=model_device)
 
             # Convert T3 to bfloat16 if enabled.
             # Token generation is memory-bandwidth bound; bf16 halves bytes read per
@@ -479,8 +573,11 @@ def synthesize(
         if audio_prompt_path and hasattr(chatterbox_model, "conds"):
             ex_for_key = 0.0 if loaded_model_type == "turbo" else exaggeration
             conds_key = _conds_cache_key(audio_prompt_path, ex_for_key)
-            if conds_key in _conds_cache:
-                chatterbox_model.conds = _conds_cache[conds_key]
+            # Single locked lookup that also refreshes recency — checking
+            # membership and then indexing would race with eviction.
+            cached_conds = _conds_cache_get(conds_key)
+            if cached_conds is not None:
+                chatterbox_model.conds = cached_conds
                 effective_prompt = None  # conds already set, skip prepare_conditionals
                 logger.debug(f"Voice cache hit: {audio_prompt_path}")
 
@@ -509,7 +606,7 @@ def synthesize(
         # Store conds in cache after first compute for this voice.
         if conds_key is not None and effective_prompt is not None:
             if chatterbox_model.conds is not None:
-                _conds_cache[conds_key] = chatterbox_model.conds
+                _conds_cache_store(conds_key, chatterbox_model.conds)
                 logger.debug(f"Cached voice conditionals for: {audio_prompt_path}")
 
         # The ChatterboxTTS.generate method already returns a CPU tensor.
@@ -590,7 +687,8 @@ def reload_model() -> bool:
     MODEL_LOADED = False
     loaded_model_type = None
     loaded_model_class_name = None
-    _conds_cache.clear()
+    with _conds_cache_lock:
+        _conds_cache.clear()
     logger.info("Voice conditioning cache cleared.")
 
     # 3. Force Python Garbage Collection
