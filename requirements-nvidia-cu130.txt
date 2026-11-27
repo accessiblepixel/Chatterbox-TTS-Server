@@ -14,7 +14,7 @@
 #
 # For manual installation, run these commands in order:
 #   pip install -r requirements-nvidia-cu130.txt
-#   pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master s3tokenizer==0.3.0 onnx==1.16.0
+#   pip install --no-deps git+https://github.com/accessiblepixel/chatterbox.git@patched s3tokenizer==0.3.0 onnx==1.16.0
 # ============================================================================
 
 # --- PyTorch CUDA 13.0 Package Index ---
@@ -35,7 +35,6 @@ transformers==4.46.3
 einops>=0.7.0
 omegaconf==2.3.0
 resampy==0.4.3
-resemble-perth==1.0.1
 
 # --- Core Web Framework ---
 fastapi>=0.100.0,<0.116.0      # starlette<1.0 needed for TemplateResponse compat
