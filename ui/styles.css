@@ -1059,6 +1059,19 @@ a.btn.disabled {
     background-color: var(--color-text-muted);
 }
 
+.model-badge.nano {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%); /* Emerald green gradient */
+    color: white;
+    box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+}
+
+/* And if you want a pulsing indicator like Turbo has: */
+.model-badge.nano .model-badge__indicator {
+    background-color: #34d399; /* Lighter mint green for the dot */
+    box-shadow: 0 0 6px #34d399;
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
 /* ============================================
      13. Status Indicators
      ============================================ */
